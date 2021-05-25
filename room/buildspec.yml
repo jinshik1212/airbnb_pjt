@@ -39,8 +39,8 @@ phases:
       - kubectl config set-credentials admin --token="$KUBE_TOKEN"
       - kubectl config set-context default --cluster=k8s --user=admin
       - kubectl config use-context default
-#      - kubectl apply -f kubernetes/deployment.yml
-#      - kubectl apply -f kubernetes/service.yml
+      - kubectl apply -f kubernetes/deployment.yml
+      - kubectl apply -f kubernetes/service.yml
       - |
           cat <<EOF | kubectl apply -f -
           apiVersion: v1
