@@ -794,19 +794,19 @@ kubectl -n kube-system describe secret eks-admin
   ```
 - Complian 서비스 replica 를 동적으로 늘리기 위해 HPA(horizontalpodautoscaler) 를 설정한다
   (CPU 사용량 1% 넘으면 10개까지 늘려줌)
-  '''
+  ```
   kubectl autoscale deployment complain -n airbnb --cpu-percent=1 --min=1 --max=10
-  '''
+  ```
  
 - siege 를 활용하여 부하 발생(100명, 1분)
-  '''
+  ```
   siege -c100 -t60S -v --content-type "application/json" 'http://ab11cd3a40ac94d4b9bc845d27bd6ae0-685141981.ap-northeast-2.elb.amazonaws.com:8080/complains POST {"payId":"1", "roomId":"1", "contents":"불만입니다"}'
-  '''
+  ```
 
 - complain 서비스 모니터링
-  '''
+  ```
   kubectl get deploy complain -w -n airbnb
-  '''
+  ```
 
 - 스케일아웃 확인
   ![image](https://user-images.githubusercontent.com/77129832/121443374-5b757a80-c9c8-11eb-8e6c-221fe863d366.png)  
