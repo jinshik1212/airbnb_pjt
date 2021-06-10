@@ -926,7 +926,6 @@ kubectl -n kube-system describe secret eks-admin
   ![image](https://user-images.githubusercontent.com/77129832/121451873-540a9d00-c9d9-11eb-96c4-34f71288a9c4.png)
 
 
-
 ## 동기식 호출 / 서킷 브레이킹 / 장애격리
 
 * 서킷 브레이킹 프레임워크의 선택: istio 사용
@@ -960,213 +959,42 @@ Complain 요청 부하가 과도하게 발생 시 서킷 브레이커를 통해 
 	      maxEjectionPercent: 100       # 100% 로 차단
 	EOF
   ```
+- istio enabled 확인 airbnb
+  ```
+  kubectl get ns -L istio-injection
+  ```
+  
+  ![image](https://user-images.githubusercontent.com/77129832/121458600-9e454b80-c9e4-11eb-9ad4-daa6a1ee482c.png)
 
+- Siege 에서 동시 사용자 1로 60초 부하 생성함 (Availability 100%)
 
+  ![image](https://user-images.githubusercontent.com/77129832/121459063-86ba9280-c9e5-11eb-99d8-f3d582395311.png)
+  
+- Siege 동시 사용자100 으로 부하발생 (Availability 69.14%)
+   ```
+   siege -c100 -t60S -v --content-type "application/json" 'http://ab11cd3a40ac94d4b9bc845d27bd6ae0-685141981.ap-northeast-2.elb.amazonaws.com:8080/complains POST {"payId":"1", "roomId":"1", "contents":"불만입니다"}'
+   ```
+   
+  ![image](https://user-images.githubusercontent.com/77129832/121462934-4e6a8280-c9ec-11eb-94a9-cf6332e82613.png)
 
+- 써킷브레이커 발동 Kiali 확인
 
+  ![image](https://user-images.githubusercontent.com/77129832/121462899-43afed80-c9ec-11eb-98d0-fd13d6bf2790.png)
+  
+- Destination Rule 제거
+  ```
+  kubectl delete dr --all -n airbnb
+  ```
+  ![image](https://user-images.githubusercontent.com/77129832/121463590-4ced8a00-c9ed-11eb-954f-008e0348bb30.png)
 
-시나리오는 예약(reservation)--> 룸(room) 시의 연결을 RESTful Request/Response 로 연동하여 구현이 되어있고, 예약 요청이 과도할 경우 CB 를 통하여 장애격리.
-
-- DestinationRule 를 생성하여 circuit break 가 발생할 수 있도록 설정
-최소 connection pool 설정
-```
-# destination-rule.yml
-apiVersion: networking.istio.io/v1alpha3
-kind: DestinationRule
-metadata:
-  name: dr-room
-  namespace: airbnb
-spec:
-  host: room
-  trafficPolicy:
-    connectionPool:
-      http:
-        http1MaxPendingRequests: 1
-        maxRequestsPerConnection: 1
-#    outlierDetection:
-#      interval: 1s
-#      consecutiveErrors: 1
-#      baseEjectionTime: 10s
-#      maxEjectionPercent: 100
-```
-
-* istio-injection 활성화 및 room pod container 확인
-
-```
-kubectl get ns -L istio-injection
-kubectl label namespace airbnb istio-injection=enabled 
-```
-
-![Circuit Breaker(istio-enjection)](https://user-images.githubusercontent.com/38099203/119295450-d6812600-bc91-11eb-8aad-46eeac968a41.PNG)
-
-![Circuit Breaker(pod)](https://user-images.githubusercontent.com/38099203/119295568-0cbea580-bc92-11eb-9d2b-8580f3576b47.PNG)
-
-
-* 부하테스터 siege 툴을 통한 서킷 브레이커 동작 확인:
-
-siege 실행
-
-```
-kubectl run siege --image=apexacme/siege-nginx -n airbnb
-kubectl exec -it siege -c siege -n airbnb -- /bin/bash
-```
-
-
-- 동시사용자 1로 부하 생성 시 모두 정상
-```
-siege -c1 -t10S -v --content-type "application/json" 'http://room:8080/rooms POST {"desc": "Beautiful House3"}'
-
-** SIEGE 4.0.4
-** Preparing 1 concurrent users for battle.
-The server is now under siege...
-HTTP/1.1 201     0.49 secs:     254 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.05 secs:     254 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.02 secs:     254 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.03 secs:     254 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.02 secs:     254 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.02 secs:     254 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.03 secs:     254 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.03 secs:     254 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.03 secs:     254 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.03 secs:     256 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.03 secs:     256 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.02 secs:     256 bytes ==> POST http://room:8080/rooms
-```
-
-- 동시사용자 2로 부하 생성 시 503 에러 168개 발생
-```
-siege -c2 -t10S -v --content-type "application/json" 'http://room:8080/rooms POST {"desc": "Beautiful House3"}'
-
-** SIEGE 4.0.4
-** Preparing 2 concurrent users for battle.
-The server is now under siege...
-HTTP/1.1 201     0.02 secs:     258 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.02 secs:     258 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 503     0.10 secs:      81 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.02 secs:     258 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.04 secs:     258 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.05 secs:     258 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.22 secs:     258 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.08 secs:     258 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.07 secs:     258 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 503     0.01 secs:      81 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.01 secs:     258 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.03 secs:     258 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.02 secs:     258 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.01 secs:     258 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.02 secs:     258 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 503     0.01 secs:      81 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.01 secs:     258 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.02 secs:     258 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.02 secs:     258 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.02 secs:     258 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 503     0.00 secs:      81 bytes ==> POST http://room:8080/rooms
-
-Lifting the server siege...
-Transactions:                   1904 hits
-Availability:                  91.89 %
-Elapsed time:                   9.89 secs
-Data transferred:               0.48 MB
-Response time:                  0.01 secs
-Transaction rate:             192.52 trans/sec
-Throughput:                     0.05 MB/sec
-Concurrency:                    1.98
-Successful transactions:        1904
-Failed transactions:             168
-Longest transaction:            0.03
-Shortest transaction:           0.00
-```
-
-- kiali 화면에 서킷 브레이크 확인
-
-![Circuit Breaker(kiali)](https://user-images.githubusercontent.com/38099203/119298194-7f7e4f80-bc97-11eb-8447-678eece29e5c.PNG)
-
-
-- 다시 최소 Connection pool로 부하 다시 정상 확인
-
-```
-** SIEGE 4.0.4
-** Preparing 1 concurrent users for battle.
-The server is now under siege...
-HTTP/1.1 201     0.01 secs:     260 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.01 secs:     260 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.01 secs:     260 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.03 secs:     260 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.00 secs:     260 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.02 secs:     260 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.01 secs:     260 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.01 secs:     260 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.01 secs:     260 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.00 secs:     260 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.01 secs:     260 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.01 secs:     260 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.01 secs:     260 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.00 secs:     260 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.01 secs:     260 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.01 secs:     260 bytes ==> POST http://room:8080/rooms
-
-:
-:
-
-Lifting the server siege...
-Transactions:                   1139 hits
-Availability:                 100.00 %
-Elapsed time:                   9.19 secs
-Data transferred:               0.28 MB
-Response time:                  0.01 secs
-Transaction rate:             123.94 trans/sec
-Throughput:                     0.03 MB/sec
-Concurrency:                    0.98
-Successful transactions:        1139
-Failed transactions:               0
-Longest transaction:            0.04
-Shortest transaction:           0.00
-
-```
-
-- 운영시스템은 죽지 않고 지속적으로 CB 에 의하여 적절히 회로가 열림과 닫힘이 벌어지면서 자원을 보호하고 있음을 보여줌.
-  virtualhost 설정과 동적 Scale out (replica의 자동적 추가,HPA) 을 통하여 시스템을 확장 해주는 후속처리가 필요.
-
-
-### 오토스케일 아웃
-앞서 CB 는 시스템을 안정되게 운영할 수 있게 해줬지만 사용자의 요청을 100% 받아들여주지 못했기 때문에 이에 대한 보완책으로 자동화된 확장 기능을 적용하고자 한다. 
-
-- room deployment.yml 파일에 resources 설정을 추가한다
-![Autoscale (HPA)](https://user-images.githubusercontent.com/38099203/119283787-0a038680-bc79-11eb-8d9b-d8aed8847fef.PNG)
-
-- room 서비스에 대한 replica 를 동적으로 늘려주도록 HPA 를 설정한다. 설정은 CPU 사용량이 50프로를 넘어서면 replica 를 10개까지 늘려준다:
-```
-kubectl autoscale deployment room -n airbnb --cpu-percent=50 --min=1 --max=10
-```
-![Autoscale (HPA)(kubectl autoscale 명령어)](https://user-images.githubusercontent.com/38099203/119299474-ec92e480-bc99-11eb-9bc3-8c5246b02783.PNG)
-
-- 부하를 동시사용자 100명, 1분 동안 걸어준다.
-```
-siege -c100 -t60S -v --content-type "application/json" 'http://room:8080/rooms POST {"desc": "Beautiful House3"}'
-```
-- 오토스케일이 어떻게 되고 있는지 모니터링을 걸어둔다
-```
-kubectl get deploy room -w -n airbnb 
-```
-- 어느정도 시간이 흐른 후 (약 30초) 스케일 아웃이 벌어지는 것을 확인할 수 있다:
-![Autoscale (HPA)(모니터링)](https://user-images.githubusercontent.com/38099203/119299704-6a56f000-bc9a-11eb-9ba8-55e5978f3739.PNG)
-
-- siege 의 로그를 보아도 전체적인 성공률이 높아진 것을 확인 할 수 있다. 
-```
-Lifting the server siege...
-Transactions:                  15615 hits
-Availability:                 100.00 %
-Elapsed time:                  59.44 secs
-Data transferred:               3.90 MB
-Response time:                  0.32 secs
-Transaction rate:             262.70 trans/sec
-Throughput:                     0.07 MB/sec
-Concurrency:                   85.04
-Successful transactions:       15675
-Failed transactions:               0
-Longest transaction:            2.55
-Shortest transaction:           0.01
-```
+- 동일하게 부하 발생
+  ```
+  siege -c100 -t60S -v --content-type "application/json" 'http://ab11cd3a40ac94d4b9bc845d27bd6ae0-685141981.ap-northeast-2.elb.amazonaws.com:8080/complains POST {"payId":"1", "roomId":"1", "contents":"불만입니다"}'
+  ```
+  Availability 100% 정상 확인
+  
+  ![image](https://user-images.githubusercontent.com/77129832/121463791-a81f7c80-c9ed-11eb-91f0-bcf28f2bf80d.png)
+   
 
 
 # Config Map/ Persistence Volume
