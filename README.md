@@ -1038,18 +1038,19 @@ Complain 요청 부하가 과도하게 발생 시 서킷 브레이커를 통해 
   ```
 
 - application.yml 파일에서 해당 ConfigMap 설정 Key (url) 활용
-	  ```
-		bindings:
-		event-in:
-		  group: complain
-		  destination: airbnb
-		  contentType: application/json
-		event-out:
-		  destination: airbnb
-		  contentType: application/json
+  ```
+    ...
+    bindings:
+	event-in:
+	  group: complain
+	  destination: airbnb
+	  contentType: application/json
+	event-out:
+	  destination: airbnb
+	  contentType: application/json
 	prop:
-	  payment:
-	    url: ${syncurl}          
+	payment:
+	url: ${syncurl}          
 
   ```
 - CodeBuild 재 실행 후, 테스트 (정상동작 확인)
