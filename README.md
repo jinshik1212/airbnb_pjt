@@ -996,289 +996,69 @@ Complain 요청 부하가 과도하게 발생 시 서킷 브레이커를 통해 
   ![image](https://user-images.githubusercontent.com/77129832/121463791-a81f7c80-c9ed-11eb-91f0-bcf28f2bf80d.png)
    
 
+# ConfigMap
 
-# Config Map/ Persistence Volume
-- Persistence Volume
-
-1: EFS 생성
-```
-EFS 생성 시 클러스터의 VPC를 선택해야함
-```
-![클러스터의 VPC를 선택해야함](https://user-images.githubusercontent.com/38099203/119364089-85048580-bce9-11eb-8001-1c20a93b8e36.PNG)
-
-![EFS생성](https://user-images.githubusercontent.com/38099203/119343415-60041880-bcd1-11eb-9c25-1695c858f6aa.PNG)
-
-2. EFS 계정 생성 및 ROLE 바인딩
-```
-kubectl apply -f efs-sa.yml
-
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: efs-provisioner
-  namespace: airbnb
-
-
-kubectl get ServiceAccount efs-provisioner -n airbnb
-NAME              SECRETS   AGE
-efs-provisioner   1         9m1s  
+- Complain 서비스 동기호출 URL 설정을 대체하고자 ConfigMap 설정함
+  ```
+  cat <<EOF | kubectl apply -f -
+	> apiVersion: v1
+	> kind: ConfigMap
+	> metadata:
+	>   name: airbnb-complain-config
+	>   namespace: airbnb
+	> data:
+	>   # key value 로 매핑
+	>   syncurl: "http://gateway:8080"
+	> EOF   
+  ```
   
-  
-  
-kubectl apply -f efs-rbac.yaml
+  ![image](https://user-images.githubusercontent.com/77129832/121465709-203b7180-c9f1-11eb-953a-79dce2a7cf29.png)
 
-namespace를 반듯이 수정해야함
-
-  
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: efs-provisioner-runner
-  namespace: airbnb
-rules:
-  - apiGroups: [""]
-    resources: ["persistentvolumes"]
-    verbs: ["get", "list", "watch", "create", "delete"]
-  - apiGroups: [""]
-    resources: ["persistentvolumeclaims"]
-    verbs: ["get", "list", "watch", "update"]
-  - apiGroups: ["storage.k8s.io"]
-    resources: ["storageclasses"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: [""]
-    resources: ["events"]
-    verbs: ["create", "update", "patch"]
----
-kind: ClusterRoleBinding
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: run-efs-provisioner
-  namespace: airbnb
-subjects:
-  - kind: ServiceAccount
-    name: efs-provisioner
-     # replace with namespace where provisioner is deployed
-    namespace: airbnb
-roleRef:
-  kind: ClusterRole
-  name: efs-provisioner-runner
-  apiGroup: rbac.authorization.k8s.io
----
-kind: Role
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: leader-locking-efs-provisioner
-  namespace: airbnb
-rules:
-  - apiGroups: [""]
-    resources: ["endpoints"]
-    verbs: ["get", "list", "watch", "create", "update", "patch"]
----
-kind: RoleBinding
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: leader-locking-efs-provisioner
-  namespace: airbnb
-subjects:
-  - kind: ServiceAccount
-    name: efs-provisioner
-    # replace with namespace where provisioner is deployed
-    namespace: airbnb
-roleRef:
-  kind: Role
-  name: leader-locking-efs-provisioner
-  apiGroup: rbac.authorization.k8s.io
-
-
-```
-
-3. EFS Provisioner 배포
-```
-kubectl apply -f efs-provisioner-deploy.yml
-
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: efs-provisioner
-  namespace: airbnb
-spec:
-  replicas: 1
-  strategy:
-    type: Recreate
-  selector:
-    matchLabels:
-      app: efs-provisioner
-  template:
-    metadata:
-      labels:
-        app: efs-provisioner
-    spec:
-      serviceAccount: efs-provisioner
+- Complain 서비스 Deployment.yml 파일 적용
+  ```
+      spec:
       containers:
-        - name: efs-provisioner
-          image: quay.io/external_storage/efs-provisioner:latest
+        - name: complain
+          image: 654789606772.dkr.ecr.ap-northeast-2.amazonaws.com/user03-complain:v10
+          ports:
+            - containerPort: 8080          
           env:
-            - name: FILE_SYSTEM_ID
-              value: fs-562f9c36
-            - name: AWS_REGION
-              value: ap-northeast-2
-            - name: PROVISIONER_NAME
-              value: my-aws.com/aws-efs
-          volumeMounts:
-            - name: pv-volume
-              mountPath: /persistentvolumes
-      volumes:
-        - name: pv-volume
-          nfs:
-            server: fs-562f9c36.efs.ap-northeast-2.amazonaws.com
-            path: /
+          - name: syncurl
+            valueFrom:
+              configMapKeyRef:
+                name: airbnb-complain-config
+                key: syncurl           
+          resources:
+            requests:
+              cpu: "1000m"
+              memory: "256Mi"
+            limits:
+              cpu: "1500m"
+              memory: "512Mi"
+  ```
+
+- application.yml 파일에서 해당 ConfigMap 설정 Key (url) 활용
+	  ```
+		bindings:
+		event-in:
+		  group: complain
+		  destination: airbnb
+		  contentType: application/json
+		event-out:
+		  destination: airbnb
+		  contentType: application/json
+	prop:
+	  payment:
+	    url: ${syncurl}          
+
+  ```
+- CodeBuild 재 실행 후, 테스트 (정상동작 확인)
+
+![image](https://user-images.githubusercontent.com/77129832/121469210-0c930980-c9f7-11eb-8981-7f8c2e784deb.png)
 
 
-kubectl get Deployment efs-provisioner -n airbnb
-NAME              READY   UP-TO-DATE   AVAILABLE   AGE
-efs-provisioner   1/1     1            1           11m
-
-```
-
-4. 설치한 Provisioner를 storageclass에 등록
-```
-kubectl apply -f efs-storageclass.yml
 
 
-kind: StorageClass
-apiVersion: storage.k8s.io/v1
-metadata:
-  name: aws-efs
-  namespace: airbnb
-provisioner: my-aws.com/aws-efs
 
 
-kubectl get sc aws-efs -n airbnb
-NAME            PROVISIONER             RECLAIMPOLICY   VOLUMEBINDINGMODE      ALLOWVOLUMEEXPANSION   AGE
-aws-efs         my-aws.com/aws-efs      Delete          Immediate              false                  4s
-```
-
-5. PVC(PersistentVolumeClaim) 생성
-```
-kubectl apply -f volume-pvc.yml
-
-
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: aws-efs
-  namespace: airbnb
-  labels:
-    app: test-pvc
-spec:
-  accessModes:
-  - ReadWriteMany
-  resources:
-    requests:
-      storage: 6Ki
-  storageClassName: aws-efs
-  
-  
-kubectl get pvc aws-efs -n airbnb
-NAME      STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   AGE
-aws-efs   Bound    pvc-43f6fe12-b9f3-400c-ba20-b357c1639f00   6Ki        RWX            aws-efs        4m44s
-```
-
-6. room pod 적용
-```
-kubectl apply -f deployment.yml
-```
-![pod with pvc](https://user-images.githubusercontent.com/38099203/119349966-bd9c6300-bcd9-11eb-9f6d-08e4a3ec82f0.PNG)
-
-
-7. A pod에서 마운트된 경로에 파일을 생성하고 B pod에서 파일을 확인함
-```
-NAME                              READY   STATUS    RESTARTS   AGE
-efs-provisioner-f4f7b5d64-lt7rz   1/1     Running   0          14m
-room-5df66d6674-n6b7n             1/1     Running   0          109s
-room-5df66d6674-pl25l             1/1     Running   0          109s
-siege                             1/1     Running   0          2d1h
-
-
-kubectl exec -it pod/room-5df66d6674-n6b7n room -n airbnb -- /bin/sh
-/ # cd /mnt/aws
-/mnt/aws # touch intensive_course_work
-```
-![a pod에서 파일생성](https://user-images.githubusercontent.com/38099203/119372712-9736f180-bcf2-11eb-8e57-1d6e3f4273a5.PNG)
-
-```
-kubectl exec -it pod/room-5df66d6674-pl25l room -n airbnb -- /bin/sh
-/ # cd /mnt/aws
-/mnt/aws # ls -al
-total 8
-drwxrws--x    2 root     2000          6144 May 24 15:44 .
-drwxr-xr-x    1 root     root            17 May 24 15:42 ..
--rw-r--r--    1 root     2000             0 May 24 15:44 intensive_course_work
-```
-![b pod에서 파일생성 확인](https://user-images.githubusercontent.com/38099203/119373196-204e2880-bcf3-11eb-88f0-a1e91a89088a.PNG)
-
-
-- Config Map
-
-1: cofingmap.yml 파일 생성
-```
-kubectl apply -f cofingmap.yml
-
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: airbnb-config
-  namespace: airbnb
-data:
-  # 단일 key-value
-  max_reservation_per_person: "10"
-  ui_properties_file_name: "user-interface.properties"
-
-  # 다수의 key-value
-  room.properties: |
-    room.types=hotel,pansion,guesthouse
-    room.maximum-count=5    
-  kakao-interface.properties: |
-    kakao.font.color=blud
-    kakao.color.bad=yellow
-    kakao.textmode=true
-```
-
-2. deployment.yml에 적용하기
-
-```
-kubectl apply -f deployment.yml
-
-
-.......
-          env:
-			# cofingmap에 있는 단일 key-value
-            - name: MAX_RESERVATION_PER_PERSION
-              valueFrom:
-                configMapKeyRef:
-                  name: airbnb-config
-                  key: max_reservation_per_person
-           - name: UI_PROPERTIES_FILE_NAME
-              valueFrom:
-                configMapKeyRef:
-                  name: airbnb-config
-                  key: ui_properties_file_name
-          volumeMounts:
-          - mountPath: "/mnt/aws"
-            name: volume
-      volumes:
-        - name: volume
-          persistentVolumeClaim:
-            claimName: aws-efs
-        - name: config
-          configMap:
-            # cofingmap에 있는 다수의 key-value
-            name: game-demo
-              items:
-                - key: "room.properties"
-                  path: "room.properties"
-                - key: "kakao-interface.properties"
-                  path: "kakao-interface.properties"
-```
 
