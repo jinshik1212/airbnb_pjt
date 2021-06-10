@@ -792,7 +792,7 @@ kubectl -n kube-system describe secret eks-admin
               cpu: "2500m"  
               memory: "512Mi"	
   ```
-- Complian 서비스 replica 를 동적으로 늘리기 위해 HPA(horizontalpodautoscaler) 를 설정한다
+- Complain 서비스 replica 를 동적으로 늘리기 위해 HPA(horizontalpodautoscaler) 를 설정한다
   (CPU 사용량 1% 넘으면 10개까지 늘려줌)
   ```
   kubectl autoscale deployment complain -n airbnb --cpu-percent=1 --min=1 --max=10
