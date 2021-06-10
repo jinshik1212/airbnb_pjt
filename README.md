@@ -813,6 +813,92 @@ kubectl -n kube-system describe secret eks-admin
   ![image](https://user-images.githubusercontent.com/77129832/121443756-1271f600-c9c9-11eb-91fa-dc53fa5afb97.png)
 
 
+## 무정지 재배포
+
+- 무정지 배포 확인을 위해 기존에 설정한 오토스케일러 설정을 제거함
+  ```
+  kubectl delete hpa complain -n airbnb
+  ```
+  ![image](https://user-images.githubusercontent.com/77129832/121445763-11db5e80-c9cd-11eb-9392-3398e9a87000.png)
+
+- 수정된 내용 배포하고, CodeBuild 활용하여 New 버전(v4)으로 빌드한다
+  (complain 서비스 deployment.yml 파일 내 readiness probe설정 없는 상태)
+  
+  deployment.yml
+  ```
+  apiVersion: apps/v1
+	kind: Deployment
+	metadata:
+	  name: complain
+	  namespace: airbnb
+	  labels:
+	    app: complain
+	spec:
+	  replicas: 1
+	  selector:
+	    matchLabels:
+	      app: complain
+	  template:
+	    metadata:
+	      labels:
+		app: complain
+	    spec:
+	      containers:
+		- name: complain
+		  image: 654789606772.dkr.ecr.ap-northeast-2.amazonaws.com/user03-complain:v4
+		  ports:
+		    - containerPort: 8080
+		  resources:
+		    requests:
+		      cpu: "1000m"
+		      memory: "256Mi"
+		    limits:
+		      cpu: "2500m"  
+		      memory: "512Mi"
+  ```
+  
+  CodeBuild 배포 수행
+  
+  ![image](https://user-images.githubusercontent.com/77129832/121446955-9dee8580-c9cf-11eb-8428-ef2228f5436f.png)
+
+- Siege 부하 발생, 500 Error 확인
+ 
+  ![image](https://user-images.githubusercontent.com/77129832/121447003-bbbbea80-c9cf-11eb-80ff-6d22a569c399.png)
+
+  Availability 떨어짐 확인
+  
+  ![image](https://user-images.githubusercontent.com/77129832/121447036-ce362400-c9cf-11eb-8e76-9a43d63d4f4c.png)
+
+- 이에 대한 조치를 위해 Complain 서비스 Deployment.yml 파일 내 readiness probe 설정
+  ```
+      ...
+      spec:
+      containers:
+        - name: complain
+          image: 654789606772.dkr.ecr.ap-northeast-2.amazonaws.com/user03-complain:v4
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: "1000m"
+              memory: "256Mi"
+            limits:
+              cpu: "2500m"  
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: '/actuator/health'
+              port: 8080
+            initialDelaySeconds: 10
+            timeoutSeconds: 2
+            periodSeconds: 5
+            failureThreshold: 10
+  ```
+
+- CodeBuild 활용 재 배포 후, siege 부하 결과 확인 --> Availability 100% 확인
+
+  ![image](https://user-images.githubusercontent.com/77129832/121447505-bc08b580-c9d0-11eb-9fad-a5174af72a78.png)
+
 
 ## 동기식 호출 / 서킷 브레이킹 / 장애격리
 
