@@ -900,6 +900,33 @@ kubectl -n kube-system describe secret eks-admin
   ![image](https://user-images.githubusercontent.com/77129832/121447505-bc08b580-c9d0-11eb-9fad-a5174af72a78.png)
 
 
+# Self-healing (Liveness Probe)
+
+- complain 서비스 deployment.yml 파일 수정 후, 빌드실행(CodeBuild)
+   ```
+   Container 실행 후, /tmp/healthy 파일 생성 90초 후, 삭제
+   livenessProbe에 'cat /tmp/healthy' 검증함
+   ```
+   ![image](https://user-images.githubusercontent.com/77129832/121449360-9d0c2280-c9d4-11eb-83d7-a9998e987125.png)
+
+- Container 실행 이 후, /tmp/healthy 파일 삭제되고, LivenessProbe 실패 리턴함.
+  Pod 진입하여 /tmp/healthy 파일 생성하고, 정상 상태로 변경됨을 확인함
+  
+  kubectl describe pod complain -n airbnb 확인
+  
+  ![image](https://user-images.githubusercontent.com/77129832/121451697-fece8b80-c9d8-11eb-9c19-1c14432e1aaf.png)
+
+  complain 해당 pod 상에 tmp/healthy 파일 생성
+  ```
+  kubectl exec -it pod/complain-77867b4c46-586tv -n airbnb -- touch /tmp/healthy
+  ```
+  
+- 파일 생성 후, Running 상태 확인
+  
+  ![image](https://user-images.githubusercontent.com/77129832/121451873-540a9d00-c9d9-11eb-96c4-34f71288a9c4.png)
+
+
+
 ## 동기식 호출 / 서킷 브레이킹 / 장애격리
 
 * 서킷 브레이킹 프레임워크의 선택: istio 사용하여 구현함
@@ -1107,109 +1134,6 @@ Longest transaction:            2.55
 Shortest transaction:           0.01
 ```
 
-## 무정지 재배포
-
-* 먼저 무정지 재배포가 100% 되는 것인지 확인하기 위해서 Autoscaler 이나 CB 설정을 제거함
-
-```
-kubectl delete destinationrules dr-room -n airbnb
-kubectl label namespace airbnb istio-injection-
-kubectl delete hpa room -n airbnb
-```
-
-- seige 로 배포작업 직전에 워크로드를 모니터링 함.
-```
-siege -c100 -t60S -r10 -v --content-type "application/json" 'http://room:8080/rooms POST {"desc": "Beautiful House3"}'
-
-** SIEGE 4.0.4
-** Preparing 1 concurrent users for battle.
-The server is now under siege...
-HTTP/1.1 201     0.01 secs:     260 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.01 secs:     260 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.01 secs:     260 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.03 secs:     260 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.00 secs:     260 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.02 secs:     260 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.01 secs:     260 bytes ==> POST http://room:8080/rooms
-HTTP/1.1 201     0.01 secs:     260 bytes ==> POST http://room:8080/rooms
-
-```
-
-- 새버전으로의 배포 시작
-```
-kubectl set image ...
-```
-
-- seige 의 화면으로 넘어가서 Availability 가 100% 미만으로 떨어졌는지 확인
-
-```
-siege -c100 -t60S -r10 -v --content-type "application/json" 'http://room:8080/rooms POST {"desc": "Beautiful House3"}'
-
-
-Transactions:                   7732 hits
-Availability:                  87.32 %
-Elapsed time:                  17.12 secs
-Data transferred:               1.93 MB
-Response time:                  0.18 secs
-Transaction rate:             451.64 trans/sec
-Throughput:                     0.11 MB/sec
-Concurrency:                   81.21
-Successful transactions:        7732
-Failed transactions:            1123
-Longest transaction:            0.94
-Shortest transaction:           0.00
-
-```
-- 배포기간중 Availability 가 평소 100%에서 87% 대로 떨어지는 것을 확인. 원인은 쿠버네티스가 성급하게 새로 올려진 서비스를 READY 상태로 인식하여 서비스 유입을 진행한 것이기 때문. 이를 막기위해 Readiness Probe 를 설정함
-
-```
-# deployment.yaml 의 readiness probe 의 설정:
-```
-
-![probe설정](https://user-images.githubusercontent.com/38099203/119301424-71333200-bc9d-11eb-9f75-f8c98fce70a3.PNG)
-
-```
-kubectl apply -f kubernetes/deployment.yml
-```
-
-- 동일한 시나리오로 재배포 한 후 Availability 확인:
-```
-Lifting the server siege...
-Transactions:                  27657 hits
-Availability:                 100.00 %
-Elapsed time:                  59.41 secs
-Data transferred:               6.91 MB
-Response time:                  0.21 secs
-Transaction rate:             465.53 trans/sec
-Throughput:                     0.12 MB/sec
-Concurrency:                   99.60
-Successful transactions:       27657
-Failed transactions:               0
-Longest transaction:            1.20
-Shortest transaction:           0.00
-
-```
-
-배포기간 동안 Availability 가 변화없기 때문에 무정지 재배포가 성공한 것으로 확인됨.
-
-
-# Self-healing (Liveness Probe)
-- room deployment.yml 파일 수정 
-```
-콘테이너 실행 후 /tmp/healthy 파일을 만들고 
-90초 후 삭제
-livenessProbe에 'cat /tmp/healthy'으로 검증하도록 함
-```
-![deployment yml tmp healthy](https://user-images.githubusercontent.com/38099203/119318677-8ff0f300-bcb4-11eb-950a-e3c15feed325.PNG)
-
-- kubectl describe pod room -n airbnb 실행으로 확인
-```
-컨테이너 실행 후 90초 동인은 정상이나 이후 /tmp/healthy 파일이 삭제되어 livenessProbe에서 실패를 리턴하게 됨
-pod 정상 상태 일때 pod 진입하여 /tmp/healthy 파일 생성해주면 정상 상태 유지됨
-```
-
-![get pod tmp healthy](https://user-images.githubusercontent.com/38099203/119318781-a9923a80-bcb4-11eb-9783-65051ec0d6e8.PNG)
-![touch tmp healthy](https://user-images.githubusercontent.com/38099203/119319050-f118c680-bcb4-11eb-8bca-aa135c1e067e.PNG)
 
 # Config Map/ Persistence Volume
 - Persistence Volume
