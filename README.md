@@ -929,7 +929,41 @@ kubectl -n kube-system describe secret eks-admin
 
 ## 동기식 호출 / 서킷 브레이킹 / 장애격리
 
-* 서킷 브레이킹 프레임워크의 선택: istio 사용하여 구현함
+* 서킷 브레이킹 프레임워크의 선택: istio 사용
+
+ Complain 등록 시, 사전 Paid 여부를 Pament 서비 Req/Res Sync 연동으로 구현되어 있으며, 
+Complain 요청 부하가 과도하게 발생 시 서킷 브레이커를 통해 격리조치 함
+
+- istio 및 kiali 설치
+
+  ![image](https://user-images.githubusercontent.com/77129832/121453802-b44f0e00-c9dc-11eb-99d6-da30d5888da0.png)
+
+- destination-rule 생성
+  ```
+  cat <<EOF | kubectl apply -f -
+	apiVersion: networking.istio.io/v1alpha3
+	kind: DestinationRule
+	metadata:
+	  name: dr-complain
+	  namespace: airbnb
+	spec:
+	  host: complain
+	  trafficPolicy:
+	    connectionPool:
+	      http:
+		http1MaxPendingRequests: 1
+		maxRequestsPerConnection: 1
+	    outlierDetection:
+	      consecutiveErrors: 5          # 5xx 에러가 5번 발생하면
+	      interval: 1s                  # 1초마다 스캔 하여
+	      baseEjectionTime: 30s         # 30 초 동안 circuit breaking 처리   
+	      maxEjectionPercent: 100       # 100% 로 차단
+	EOF
+  ```
+
+
+
+
 
 시나리오는 예약(reservation)--> 룸(room) 시의 연결을 RESTful Request/Response 로 연동하여 구현이 되어있고, 예약 요청이 과도할 경우 CB 를 통하여 장애격리.
 
